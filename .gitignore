@@ -1,0 +1,16 @@
+.env
+
+# Data persistent (terlalu besar untuk Git)
+data/
+
+# Log files
+logs/
+
+# SSL certificates
+nginx/ssl/
+*.log
+*.tar.gz
+
+# OS files
+.DS_Store
+Thumbs.db

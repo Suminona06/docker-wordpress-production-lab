@@ -1,0 +1,128 @@
+# ============================================================
+# NETWORKS - Isolasi jaringan antar container
+# ============================================================
+networks:
+  wp_network:
+    driver: bridge
+    name: wp_network
+
+# ============================================================
+# VOLUMES - Penyimpanan data persisten
+# ============================================================
+volumes:
+  mysql_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/mysql
+  wordpress_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/wordpress
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
+  backup_data:
+    driver: local
+    driver_opys:
+      type: local
+      o: bind
+      device: ./data/backup
+
+# ============================================================
+# SERVICES
+# ============================================================
+services:
+
+  # ----------------------------------------------------------
+  # DATABASE: MariaDB (kompatibel penuh dengan MySQL)
+  # ----------------------------------------------------------
+  db:
+    image: mariadb:10.11
+    container_name: wp_database
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - wp_network
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # Database TIDAK expose port ke host untuk keamanan
+    # Hanya bisa diakses dari container dalam wp_network
+
+  # ----------------------------------------------------------
+  # WORDPRESS: PHP-FPM (tanpa Apache, lebih ringan)
+  # ----------------------------------------------------------
+  wordpress:
+    image: wordpress:6.9-php8.2-fpm
+    container_name: wp_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: ${WORDPRESS_DB_HOST}
+      WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+      WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+      WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+      WORDPRESS_AUTH_KEY: ${WORDPRESS_AUTH_KEY}
+      WORDPRESS_SECURE_AUTH_KEY: ${WORDPRESS_SECURE_AUTH_KEY}
+      WORDPRESS_LOGGED_IN_KEY: ${WORDPRESS_LOGGED_IN_KEY}
+      WORDPRESS_NONCE_KEY: ${WORDPRESS_NONCE_KEY}
+      WORDPRESS_AUTH_SALT: ${WORDPRESS_AUTH_SALT}
+      WORDPRESS_SECURE_AUTH_SALT: ${WORDPRESS_SECURE_AUTH_SALT}
+      WORDPRESS_LOGGED_IN_SALT: ${WORDPRESS_LOGGED_IN_SALT}
+      WORDPRESS_NONCE_SALT: ${WORDPRESS_NONCE_SALT}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', 'https://${DOMAIN}');
+        define('WP_SITEURL', 'https://${DOMAIN}');
+        define('FORCE_SSL_ADMIN', true);
+        define('WP_DEBUG', false);
+        define('WP_DEBUG_LOG', false);
+        @ini_set('upload_max_size', '256M');
+        @ini_set('post_max_size', '256M');
+        @ini_set('max_execution_time', '3000');
+        define('WP_REDIS_HOST', 'redis');
+        define('WP_REDIS_PORT', 6379);
+        define('WP_CACHE', true);
+     TZ: ${TZ}
+    volumes:
+      - wordpress_data:/var/www/html
+      - ./php-fpm/www.conf:/usr/local/etc/php-fpm.d/www.conf
+    ports:
+      - "9000:9000"
+    networks:
+      - wp_network
+
+    redis:
+      image: redis:7-alpine
+      container_name: wp_redis
+      restart: unless-stopped
+      command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-iru
+      volumes:
+        - redis_data:/data
+      networks:
+      - wp_network 
+      healtcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 30s
+        timeout: 10s
+        retries: 4
